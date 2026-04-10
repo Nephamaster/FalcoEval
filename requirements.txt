@@ -1,0 +1,6 @@
+nltk
+numpy
+openai
+pandas
+rouge_score
+tqdm
