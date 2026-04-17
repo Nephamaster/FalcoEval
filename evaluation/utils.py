@@ -1,4 +1,7 @@
-from description import *
+try:
+    from .description import *
+except ImportError:
+    from description import *
 
 
 # 数据集类型映射表

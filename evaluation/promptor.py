@@ -1,6 +1,13 @@
-from utils import DATA_TYPE_MAPPING
 from typing import List
-import json
+
+try:
+    from .data_loader import load_jsonl_dataset
+    from .paths import dataset_path
+    from .utils import DATA_TYPE_MAPPING
+except ImportError:
+    from data_loader import load_jsonl_dataset
+    from paths import dataset_path
+    from utils import DATA_TYPE_MAPPING
 
 
 def MCPrompt(data:dict):
@@ -27,20 +34,19 @@ def SingleQAPrompt(data:dict):
 
 def MathPrompt(data:dict):
     q = data["question"]
-    prompt = f"Answer the math problem below.\nQuestion: {q}\Respond only to the final answer(the value) you've calculated:\n"
+    prompt = f"Answer the math problem below.\nQuestion: {q}\nRespond only to the final answer(the value) you've calculated:\n"
     return prompt
 
 
 class Promptor:
     def __init__(self, dataset:str):
         self.dataset = dataset
-        self.samples = self.load_dataset()
         self.data_type = DATA_TYPE_MAPPING.get(dataset, 'MultiChoice')
+        self.samples = self.load_dataset()
     
     def load_dataset(self) -> List[dict]:
-        data_file = f'../datasets/{self.dataset}.jsonl'
-        with open(data_file, 'r', encoding='utf-8') as f:
-            return [json.loads(line) for line in f]
+        data_file = dataset_path(self.dataset)
+        return load_jsonl_dataset(data_file, self.data_type)
     
     def build_prompt(self):
         if self.data_type == 'MultiChoice':
@@ -51,7 +57,7 @@ class Promptor:
             if self.dataset != 'WikiEvent':
                 prompts = [SingleQAPrompt(sample) for sample in self.samples]
             else:
-                pass
+                raise NotImplementedError("WikiEvent prompt building is not implemented.")
         elif self.data_type == 'Math':
             prompts = [MathPrompt(sample) for sample in self.samples]
         else:

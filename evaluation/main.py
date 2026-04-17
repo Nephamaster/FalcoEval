@@ -65,7 +65,7 @@ def evaluate(model_name='Qwen/Qwen2.5-3B',
              file=None,
              progress=gr.Progress(track_tqdm=True)):
     model_path = custom_model if custom_model is not None else model_paths[model_name]
-    prednref = predict(dataset=dataset_name, model_path=model_path, progressor=progress)
+    prednref = predict(dataset=dataset_name, model_path=model_path, progressor=progress, backend="sglang")
     result = eval(dataset=dataset_name, prednref=prednref, metrics=selected_metrics)
     print('Done')
     return result
