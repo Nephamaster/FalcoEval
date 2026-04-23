@@ -11,7 +11,7 @@ except ImportError:
 
 
 def MCRef(data:dict):
-    choices = data["choices"]
+    choices = [str(choice).strip() for choice in data["choices"]]
     answer = str(data['answer']).strip()
     if len(answer) == 1 and answer.upper() in "ABCDEF":
         return answer.upper()

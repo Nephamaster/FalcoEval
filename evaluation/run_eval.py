@@ -49,6 +49,27 @@ def _performance_metrics(latencies, output_lengths):
     return result
 
 
+def _runtime_metrics(runtime):
+    if not runtime:
+        return {}
+
+    result = {
+        "Model reused": bool(runtime.get("reused_model", False)),
+        "Cold start load (ms)": round(float(runtime.get("cold_start_load_ms", 0.0)), 2),
+        "Warmup batch (ms)": round(float(runtime.get("warmup_batch_ms", 0.0)), 2),
+        "Warmup batches": int(runtime.get("warmup_batches", 0)),
+        "Warmup samples": int(runtime.get("warmup_samples", 0)),
+        "Steady-state generation (ms)": round(float(runtime.get("steady_state_generation_ms", 0.0)), 2),
+        "Steady-state samples": int(runtime.get("steady_state_samples", 0)),
+        "Total generation (ms)": round(float(runtime.get("total_generation_ms", 0.0)), 2),
+    }
+
+    note = runtime.get("latency_scope")
+    if note:
+        result["Latency scope"] = note
+    return result
+
+
 def eval(dataset: str, prednref, metrics: list[str] | None = None, task_type: str | None = None, output: str | None = None):
     data_type = task_type or DATA_TYPE_MAPPING.get(dataset)
     if data_type is None:
@@ -65,8 +86,10 @@ def eval(dataset: str, prednref, metrics: list[str] | None = None, task_type: st
     references = data["references"]
     latencies = data.get("latencies", [])
     output_lengths = data.get("output_lengths", data.get("lengths", []))
+    runtime = data.get("runtime", {})
 
     result = Evaluator.evaluate(predictions, references, data_type=data_type, metrics=metrics)
+    result.update(_runtime_metrics(runtime))
     result.update(_performance_metrics(latencies, output_lengths))
 
     print(f"Dataset: {dataset}")

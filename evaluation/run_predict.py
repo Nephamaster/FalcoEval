@@ -26,6 +26,14 @@ except ImportError:
 
 DEFAULT_MAX_NEW_TOKENS = 512
 DEFAULT_BACKEND = "sglang"
+TASK_MAX_NEW_TOKENS = {
+    "MultiChoice": 8,
+    "Judgement": 8,
+    "Math": 32,
+    "Extraction": 64,
+    "Precision": 64,
+    "Generation": 256,
+}
 
 
 def _chunks(items: list[str], batch_size: int) -> Iterable[list[str]]:
@@ -36,11 +44,21 @@ def _chunks(items: list[str], batch_size: int) -> Iterable[list[str]]:
 class BasePredictor:
     backend_name = "base"
 
+    def __init__(self, model_path: str):
+        self.model_path = model_path
+        self._needs_warmup = True
+
     def generate_batch(self, prompts: list[str], max_new_tokens: int) -> list[dict]:
         raise NotImplementedError
 
     def shutdown(self):
         pass
+
+    def consume_warmup_flag(self) -> bool:
+        if self._needs_warmup:
+            self._needs_warmup = False
+            return True
+        return False
 
 
 class SGLangPredictor(BasePredictor):
@@ -50,6 +68,7 @@ class SGLangPredictor(BasePredictor):
         import sglang as sgl
         from transformers import AutoTokenizer
 
+        super().__init__(model_path)
         print(f"Loading SGLang engine from {model_path}")
         self.engine = sgl.Engine(model_path=model_path, tp_size=tp_size)
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
@@ -89,6 +108,7 @@ class TransformersPredictor(BasePredictor):
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
+        super().__init__(model_path)
         print(f"Loading Transformers model from {model_path}")
         self.torch = torch
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -136,6 +156,12 @@ def create_predictor(model_path: str, backend: str, device: str | None = None, t
     raise ValueError(f"Unknown backend: {backend}. Use 'sglang' or 'transformers'.")
 
 
+def default_max_new_tokens_for_task(data_type: str | None) -> int:
+    if data_type is None:
+        return DEFAULT_MAX_NEW_TOKENS
+    return TASK_MAX_NEW_TOKENS.get(data_type, DEFAULT_MAX_NEW_TOKENS)
+
+
 class TaskProcessor:
     def __init__(self, model: BasePredictor, dataset: str):
         self.model = model
@@ -161,6 +187,10 @@ class TaskProcessor:
         latencies = []
         input_token_nums = []
         output_token_nums = []
+        warmup_ms = 0.0
+        warmup_batches = 0
+        warmup_samples = 0
+        total_generation_ms = 0.0
 
         print("Building prompts...")
         prompts = self.promptor.build_prompt()
@@ -168,7 +198,14 @@ class TaskProcessor:
             start = time.perf_counter()
             generations = self.model.generate_batch(batch, max_new_tokens=max_new_tokens)
             end = time.perf_counter()
-            batch_latency_per_sample = ((end - start) * 1000) / max(1, len(batch))
+            batch_elapsed_ms = (end - start) * 1000
+            total_generation_ms += batch_elapsed_ms
+            batch_latency_per_sample = batch_elapsed_ms / max(1, len(batch))
+            is_warmup_batch = self.model.consume_warmup_flag()
+            if is_warmup_batch:
+                warmup_ms += batch_elapsed_ms
+                warmup_batches += 1
+                warmup_samples += len(batch)
 
             for generation in generations:
                 output = generation["text"]
@@ -177,41 +214,65 @@ class TaskProcessor:
 
                 predictions.append(pred)
                 raw_outputs.append(output)
-                latencies.append(batch_latency_per_sample)
+                if not is_warmup_batch:
+                    latencies.append(batch_latency_per_sample)
                 input_token_nums.append(generation["input_tokens"])
                 output_token_nums.append(generation["output_tokens"])
 
         print("Building references...")
         references = self.referencer.build_refernce()
-        return predictions, references, raw_outputs, latencies, input_token_nums, output_token_nums
+        runtime = {
+            "warmup_batch_ms": round(float(warmup_ms), 2),
+            "warmup_batches": warmup_batches,
+            "warmup_samples": warmup_samples,
+            "steady_state_generation_ms": round(float(total_generation_ms - warmup_ms), 2),
+            "steady_state_samples": max(0, len(predictions) - warmup_samples),
+            "total_generation_ms": round(float(total_generation_ms), 2),
+            "latency_scope": "Steady-state latency excludes the first generation batch used for warmup.",
+        }
+        return predictions, references, raw_outputs, latencies, input_token_nums, output_token_nums, runtime
 
 
 def predict(
     dataset: str,
-    model_path: str,
+    model_path: str | None = None,
     task_type: str | None = None,
     output: str | None = None,
     progressor=None,
     backend: str = DEFAULT_BACKEND,
     batch_size: int = 8,
-    max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS,
+    max_new_tokens: int | None = None,
     device: str | None = None,
     tp_size: int = 1,
+    predictor: BasePredictor | None = None,
+    keep_predictor_alive: bool = False,
 ):
     data_type = task_type or DATA_TYPE_MAPPING.get(dataset)
     if data_type is None:
         raise ValueError("Unknown dataset type. Pass --data_type explicitly.")
+    resolved_max_new_tokens = max_new_tokens or default_max_new_tokens_for_task(data_type)
 
-    model = create_predictor(model_path=model_path, backend=backend, device=device, tp_size=tp_size)
+    cold_start_load_ms = 0.0
+    model = predictor
+    predictor_created = False
+    if model is None:
+        if model_path is None:
+            raise ValueError("`model_path` is required when `predictor` is not provided.")
+        load_start = time.perf_counter()
+        model = create_predictor(model_path=model_path, backend=backend, device=device, tp_size=tp_size)
+        cold_start_load_ms = (time.perf_counter() - load_start) * 1000
+        predictor_created = True
+    resolved_model_path = model_path or getattr(model, "model_path", None)
     try:
         processor = TaskProcessor(model, dataset)
-        predictions, references, raw_outputs, latencies, input_token_nums, output_token_nums = processor.predict(
+        predictions, references, raw_outputs, latencies, input_token_nums, output_token_nums, runtime = processor.predict(
             batch_size=batch_size,
-            max_new_tokens=max_new_tokens,
+            max_new_tokens=resolved_max_new_tokens,
             progressor=progressor,
         )
     finally:
-        model.shutdown()
+        if predictor_created and not keep_predictor_alive:
+            model.shutdown()
 
     output_data = {
         "predictions": predictions,
@@ -224,18 +285,23 @@ def predict(
         "manifest": {
             "dataset": dataset,
             "data_type": data_type,
-            "model_path": model_path,
-            "backend": backend,
+            "model_path": resolved_model_path,
+            "backend": model.backend_name,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "num_samples": len(predictions),
             "generation": {
                 "do_sample": False,
                 "temperature": 0,
-                "max_new_tokens": max_new_tokens,
+                "max_new_tokens": resolved_max_new_tokens,
                 "batch_size": batch_size,
                 "tp_size": tp_size,
                 "latency_note": "Batch latency is divided evenly across samples in each batch.",
             },
+        },
+        "runtime": {
+            "cold_start_load_ms": round(float(getattr(model, "_session_load_ms", cold_start_load_ms)), 2),
+            "reused_model": bool(getattr(model, "_session_reused", not predictor_created)),
+            **runtime,
         },
     }
 
@@ -256,7 +322,7 @@ if __name__ == "__main__":
     parser.add_argument("--model_path", type=str, default="meta-llama/Llama-2-7b-chat-hf", help="Model path")
     parser.add_argument("--backend", choices=["sglang", "transformers"], default=DEFAULT_BACKEND)
     parser.add_argument("--batch_size", type=int, default=8)
-    parser.add_argument("--max_new_tokens", type=int, default=DEFAULT_MAX_NEW_TOKENS)
+    parser.add_argument("--max_new_tokens", type=int, default=None)
     parser.add_argument("--tp_size", type=int, default=1, help="Tensor parallel size for the SGLang backend")
     parser.add_argument("--device", type=str, default=None, help="Only used by the transformers backend")
 

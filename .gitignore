@@ -1,4 +1,5 @@
 .vscode/
 __pycache__/
+evaluation/registered_models.json
 
 TODO.md

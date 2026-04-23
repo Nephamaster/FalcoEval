@@ -4,6 +4,19 @@ from pathlib import Path
 from typing import List
 
 
+def _normalize_sample(sample: dict, data_type: str) -> dict:
+    normalized = dict(sample)
+
+    if data_type == "MultiChoice" and "choices" not in normalized:
+        for alias in ("choice", "option", "options"):
+            value = normalized.get(alias)
+            if isinstance(value, list):
+                normalized["choices"] = value
+                break
+
+    return normalized
+
+
 def _has_answer(sample: dict) -> bool:
     if "answers" in sample:
         answer = sample["answers"]
@@ -43,6 +56,8 @@ def load_jsonl_dataset(path: Path, data_type: str, skip_invalid: bool = True) ->
                 if skip_invalid:
                     continue
                 raise
+
+            sample = _normalize_sample(sample, data_type)
 
             missing = _required_fields(data_type) - set(sample)
             if missing or not _has_answer(sample):

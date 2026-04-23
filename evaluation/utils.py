@@ -204,7 +204,6 @@ dataset_choices = {
 
 # ------------------ 模型路径 -------------------
 model_paths = {
-    "Qwen2.5-3B": "Qwen/Qwen2.5B",
-    "LLaMA2-7B-chat": "meta-llama/Llama-2-7b-chat",
-    "DeepSeek-R1-Distill-Qwen-1.5B": "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
+    "Qwen3-4B": "/mnt/disk4t/heyuxuan/data/models/Qwen/Qwen3-4B",
+    "Llama-3.1-8B": "/mnt/disk4t/heyuxuan/data/models/meta-llama/Llama-3.1-8B"
 }

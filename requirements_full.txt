@@ -1,8 +1,12 @@
 gradio
 nltk
+numpy
 openai
 pandas
 pyarrow
 rouge_score
 scikit-learn
+sglang
+torch=2.9.1
+tqdm
 transformers
