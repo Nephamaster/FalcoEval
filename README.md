@@ -20,3 +20,15 @@ conda activate falcoeval
 pip install nltk numpy pandas rouge_score tdqm gradio transformers torch
 python main.py
 ```
+
+## Web UI
+```sh
+pip install -r requirements.txt
+uvicorn evaluation.api:app --host 0.0.0.0 --port 8000
+
+cd frontend
+npm install
+npm run dev
+```
+
+The React frontend proxies `/api` requests to `http://127.0.0.1:8000` during local development.

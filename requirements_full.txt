@@ -1,4 +1,5 @@
 gradio
+fastapi
 nltk
 numpy
 openai
@@ -10,3 +11,4 @@ sglang
 torch=2.9.1
 tqdm
 transformers
+uvicorn[standard]

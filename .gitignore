@@ -1,5 +1,8 @@
 .vscode/
+.agents/
 __pycache__/
 evaluation/registered_models.json
+frontend/node_modules/
+frontend/dist/
 
 STAR.md

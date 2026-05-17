@@ -1,4 +1,5 @@
 gradio
+fastapi
 nltk
 openai
 pandas
@@ -6,3 +7,4 @@ pyarrow
 rouge_score
 scikit-learn
 transformers
+uvicorn[standard]
